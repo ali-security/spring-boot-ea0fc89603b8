@@ -16,8 +16,15 @@
 
 package org.springframework.boot.autoconfigure.jms.artemis;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.config.Configuration;
@@ -25,6 +32,8 @@ import org.apache.activemq.artemis.core.config.CoreAddressConfiguration;
 import org.apache.activemq.artemis.core.server.JournalType;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.junit.jupiter.api.Test;
+
+import org.springframework.boot.system.ApplicationTemp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -44,6 +53,33 @@ class ArtemisEmbeddedConfigurationFactoryTests {
 		Configuration configuration = new ArtemisEmbeddedConfigurationFactory(properties).createConfiguration();
 		assertThat(configuration.getJournalDirectory()).startsWith(System.getProperty("java.io.tmpdir"))
 			.endsWith("/journal");
+	}
+
+	@Test
+	void defaultDataDirIsApplicationSpecificTempDirectory() {
+		ArtemisProperties properties = new ArtemisProperties();
+		properties.getEmbedded().setPersistent(true);
+		Configuration configuration = new ArtemisEmbeddedConfigurationFactory(properties).createConfiguration();
+		String sharedDataDir = new File(System.getProperty("java.io.tmpdir"), "artemis-data").getAbsolutePath();
+		String applicationDataDir = new ApplicationTemp().getDir("artemis-data").getAbsolutePath();
+		assertThat(configuration.getJournalDirectory()).doesNotStartWith(sharedDataDir)
+			.isEqualTo(applicationDataDir + "/journal");
+		assertThat(configuration.getBindingsDirectory()).isEqualTo(applicationDataDir + "/bindings");
+		assertThat(configuration.getLargeMessagesDirectory()).isEqualTo(applicationDataDir + "/largemessages");
+		assertThat(configuration.getPagingDirectory()).isEqualTo(applicationDataDir + "/paging");
+	}
+
+	@Test
+	void defaultDataDirIsOnlyAccessibleByOwner() throws IOException {
+		ArtemisProperties properties = new ArtemisProperties();
+		properties.getEmbedded().setPersistent(true);
+		Configuration configuration = new ArtemisEmbeddedConfigurationFactory(properties).createConfiguration();
+		Path dataDir = new File(configuration.getJournalDirectory()).getParentFile().toPath();
+		assertThat(dataDir).isDirectory();
+		if (dataDir.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+			assertOwnerOnlyPermissions(dataDir);
+			assertOwnerOnlyPermissions(dataDir.getParent());
+		}
 	}
 
 	@Test
@@ -87,6 +123,14 @@ class ArtemisEmbeddedConfigurationFactoryTests {
 		Configuration configuration = new ArtemisEmbeddedConfigurationFactory(properties).createConfiguration();
 		List<CoreAddressConfiguration> addressConfigurations = configuration.getAddressConfigurations();
 		assertThat(addressConfigurations).hasSize(2);
+	}
+
+	private void assertOwnerOnlyPermissions(Path path) throws IOException {
+		Set<PosixFilePermission> permissions = Files.getFileAttributeView(path, PosixFileAttributeView.class)
+			.readAttributes()
+			.permissions();
+		assertThat(permissions).containsExactlyInAnyOrder(PosixFilePermission.OWNER_READ,
+				PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
 	}
 
 }
