@@ -135,29 +135,31 @@ public class CassandraAutoConfiguration {
 		if (properties == null || !properties.isEnabled()) {
 			return;
 		}
+		boolean verifyHostname = properties.isVerifyHostname();
 		String bundleName = properties.getBundle();
 		if (!StringUtils.hasLength(bundleName)) {
-			configureDefaultSslContext(builder);
+			configureDefaultSslContext(builder, verifyHostname);
 		}
 		else {
-			configureSsl(builder, sslBundles.getBundle(bundleName));
+			configureSsl(builder, sslBundles.getBundle(bundleName), verifyHostname);
 		}
 	}
 
-	private void configureDefaultSslContext(CqlSessionBuilder builder) {
+	private void configureDefaultSslContext(CqlSessionBuilder builder, boolean verifyHostname) {
 		try {
-			builder.withSslContext(SSLContext.getDefault());
+			builder.withSslEngineFactory(
+					new ProgrammaticSslEngineFactory(SSLContext.getDefault(), null, verifyHostname));
 		}
 		catch (NoSuchAlgorithmException ex) {
 			throw new IllegalStateException("Could not setup SSL default context for Cassandra", ex);
 		}
 	}
 
-	private void configureSsl(CqlSessionBuilder builder, SslBundle sslBundle) {
+	private void configureSsl(CqlSessionBuilder builder, SslBundle sslBundle, boolean verifyHostname) {
 		SslOptions options = sslBundle.getOptions();
 		Assert.state(options.getEnabledProtocols() == null, "SSL protocol options cannot be specified with Cassandra");
-		builder
-			.withSslEngineFactory(new ProgrammaticSslEngineFactory(sslBundle.createSslContext(), options.getCiphers()));
+		builder.withSslEngineFactory(
+				new ProgrammaticSslEngineFactory(sslBundle.createSslContext(), options.getCiphers(), verifyHostname));
 	}
 
 	@Bean(destroyMethod = "")
