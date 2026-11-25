@@ -24,6 +24,14 @@ inputs:
   develocity-access-key:
     required: false
     description: 'The access key for authentication with ge.spring.io'
+  build-tasks:
+    required: false
+    default: 'build'
+    description: 'Gradle tasks run by the build (sealed fork: scoped to the sealed module to fit the CI time budget)'
+  publish-tasks:
+    required: false
+    default: 'publishAllPublicationsToDeploymentRepository'
+    description: 'Gradle tasks that publish to the local deployment repository'
 outputs:
   build-scan-url:
     description: 'The URL, if any, of the build scan produced by the build'
@@ -42,16 +50,36 @@ runs:
         java-early-access: ${{ inputs.java-early-access }}
         java-toolchain: ${{ inputs.java-toolchain }}
         java-distribution: ${{ inputs.java-distribution }}
+    - name: Configure Test Result Reporting
+      shell: bash
+      run: |
+        gradle_user_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+        gradle_user_home="${gradle_user_home//\\//}"
+        mkdir -p "$gradle_user_home/init.d"
+        cp .github/seal-test-results.gradle "$gradle_user_home/init.d/seal-test-results.gradle"
+        echo "Installed test result reporting init script in $gradle_user_home/init.d"
+    - name: Accept Testcontainers Docker API Version
+      if: ${{ runner.os == 'Linux' }}
+      shell: bash
+      run: |
+        docker version
+        sudo mkdir -p /etc/systemd/system/docker.service.d
+        printf '[Service]\nEnvironment=DOCKER_MIN_API_VERSION=1.24\n' | sudo tee /etc/systemd/system/docker.service.d/min-api-version.conf
+        sudo systemctl daemon-reload
+        sudo systemctl restart docker
+        docker version
+        echo "TESTCONTAINERS_RYUK_DISABLED=true" >> "$GITHUB_ENV"
+        echo "TESTCONTAINERS_CHECKS_DISABLE=true" >> "$GITHUB_ENV"
     - name: Build
       id: build
       if: ${{ inputs.publish == 'false' }}
       shell: bash
-      run: ./gradlew build
+      run: ./gradlew ${{ inputs.build-tasks }}
     - name: Publish
       id: publish
       if: ${{ inputs.publish == 'true' }}
       shell: bash
-      run: ./gradlew -PdeploymentRepository=$(pwd)/deployment-repository ${{ !startsWith(github.event.head_commit.message, 'Next development version') && 'build' || '' }} publishAllPublicationsToDeploymentRepository
+      run: ./gradlew -PdeploymentRepository=$(pwd)/deployment-repository ${{ !startsWith(github.event.head_commit.message, 'Next development version') && inputs.build-tasks || '' }} ${{ inputs.publish-tasks }}
     - name: Read Version From gradle.properties
       id: read-version
       shell: bash
